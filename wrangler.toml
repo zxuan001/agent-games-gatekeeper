@@ -1,0 +1,13 @@
+name = "agent-games-gatekeeper"
+main = "src/index.js"
+compatibility_date = "2026-11-14"
+
+# Seen-set for accepted proof references + answered task_ids.
+# Create the namespace in the Cloudflare dashboard (Workers & Pages -> KV)
+# or with `npx wrangler kv namespace create gatekeeper-seen-proofs`,
+# then replace the placeholder id below with the real namespace id
+# AND bind it in the dashboard (Settings -> Variables -> KV Namespace Bindings,
+# variable name SEEN_PROOFS) if you deploy by pasting dist/worker.js.
+[[kv_namespaces]]
+binding = "SEEN_PROOFS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
