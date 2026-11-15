@@ -12,8 +12,13 @@
 //     HMAC (WebCrypto) and KV. A 45s internal race returns HTTP 500 instead of a
 //     fabricated decision — the platform scores that as a timeout (-2), which is
 //     cheaper than a wrong REJECT (-3) or wrong APPROVE (-6).
-//   - Fail closed: bad/missing signature -> 401; malformed task -> 400;
+//   - Fail closed: bad/missing signature -> 401; a verified request that
+//     is not a complete task is the platform's preflight probe -> signed
+//     {"ok":true,"protocolVersion":"v1"}, no decision, no KV writes;
 //     KV unavailable -> 500 (no decision sent, nothing recorded).
+//     (v1.2: the platform rejects any other probe body — v1.1's
+//     {status,service,probe} failed preflight 12:59 WIB with
+//     "must return signed protocol-v1 JSON".)
 //   - Seen-set: Cloudflare KV binding SEEN_PROOFS. One key per accepted proof
 //     (`proof:<proof_tx>` -> "1") and one key per answered task
 //     (`task:<task_id>` -> the signed response JSON, for idempotent retries).
@@ -135,17 +140,33 @@ async function handleTask(request, env) {
   }
 
   // 3. Parse and validate the envelope.
+  // The platform's signed preflight is NOT a full task: it may carry a
+  // different type, no input, or an empty body. It only needs HTTP 200.
+  // A request that verifies (correct HMAC) but is not a complete task is
+  // therefore a preflight probe: answer 200 with no decision and no KV
+  // writes. Real tasks always carry type TASK_TYPE plus a full input
+  // object; anything else cannot be scored as a decision either way, and
+  // a 200 without decision fields costs the same as a rejection (-2).
   let task;
   try {
     task = JSON.parse(rawBody);
   } catch {
-    return json({ error: "invalid json" }, 400);
+    return signedResponse(
+      { ok: true, protocolVersion: "v1" },
+      secret,
+      scheme,
+    );
   }
-  if (task.type && task.type !== TASK_TYPE) {
-    return json({ error: "unknown task type" }, 400);
-  }
-  if (!task.input || typeof task.input !== "object") {
-    return json({ error: "missing input" }, 400);
+  if (
+    task.type !== TASK_TYPE ||
+    !task.input ||
+    typeof task.input !== "object"
+  ) {
+    return signedResponse(
+      { ok: true, protocolVersion: "v1" },
+      secret,
+      scheme,
+    );
   }
 
   const taskId = String(task.task_id ?? "");
@@ -238,7 +259,7 @@ export default {
           endpoint: "POST / (or /task)",
           protocol: TASK_TYPE,
           hmac_header: "x-agent-games-signature",
-          version: "1.0.0-traps-only",
+          version: "1.2.0-traps-only",
         },
         200,
       );
